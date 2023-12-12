@@ -1,8 +1,11 @@
-from PyQt5 import QtWidgets
+from PyQt5 import QtWidgets, QtCore
 from configparser import ConfigParser
 import requests
+from threading import Thread
 
 class SettingsWindow(QtWidgets.QDialog):
+    api_key_validation_result = QtCore.pyqtSignal(bool)
+    settings_updated = QtCore.pyqtSignal()
     def __init__(self, parent=None):
         super(SettingsWindow, self).__init__(parent)
         self.setWindowTitle("Innstillinger")
@@ -37,6 +40,9 @@ class SettingsWindow(QtWidgets.QDialog):
                 color: black;
             }
         """)
+
+        self.api_key_validation_result.connect(self.on_api_key_validation_result)
+
 
         # Les innstillingene fra konfigurasjonsfilen
         self.config = ConfigParser()
@@ -110,7 +116,8 @@ class SettingsWindow(QtWidgets.QDialog):
 
         # Support og versjon
         self.layout.addWidget(QtWidgets.QLabel("Support: anthony@leinebo.com"))
-        self.layout.addWidget(QtWidgets.QLabel("Versjon: 1.0.0"))
+        self.version_label = QtWidgets.QLabel(f"Versjon: {self.config.get('Application', 'version', fallback='Ukjent')}")
+        self.layout.addWidget(self.version_label)
 
         # Lagre og avbryt knapper
         self.save_button = QtWidgets.QPushButton("Lagre", self)
@@ -125,38 +132,50 @@ class SettingsWindow(QtWidgets.QDialog):
         self.cancel_button.clicked.connect(self.close)
 
     def save_settings(self):
-        # Test API-nøkkelen før lagring
-        if self.verify_api_key(self.api_change_widget.text()):
-            # Oppdater konfigurasjonen i minnet
-            self.config.set('Credentials', 'authorization', self.api_change_widget.text())
-            self.config.set('Notifications', 'low_price_alert', str(self.low_price_notification.isChecked()))
-            self.config.set('Notifications', 'high_price_alert', str(self.high_price_notification.isChecked()))
+        # Kjør API-nøkkelverifisering i en separat tråd for å holde GUI responsivt
+        verification_thread = Thread(target=self.verify_and_save_api_key)
+        verification_thread.start()
+        self.settings_updated.emit()
 
-            # Skriv den oppdaterte konfigurasjonen til filen én gang
-            with open('config.ini', 'w') as configfile:
-                self.config.write(configfile)
+    def verify_and_save_api_key(self):
+        api_key_valid = self.verify_api_key(self.api_change_widget.text())
+        # Send resultatet tilbake til hovedtråden gjennom signalet
+        self.api_key_validation_result.emit(api_key_valid)
 
-            self.close()
+    def on_api_key_validation_result(self, api_key_valid):
+        # Dette kjøres i hovedtråden
+        if api_key_valid:
+            self.save_configuration()
         else:
             QtWidgets.QMessageBox.warning(self, "Feil", "API-nøkkelen er ikke gyldig.")
 
+
+    def save_configuration(self):
+        # Funksjonen for å faktisk lagre konfigurasjonen
+        # Denne funksjonen kjøres i hovedtråden
+        self.config.set('Credentials', 'authorization', self.api_change_widget.text())
+        self.config.set('Notifications', 'low_price_alert', str(self.low_price_notification.isChecked()))
+        self.config.set('Notifications', 'high_price_alert', str(self.high_price_notification.isChecked()))
+        with open('config.ini', 'w') as configfile:
+            self.config.write(configfile)
+            
+        self.close()
+
+    def display_api_key_error(self):
+        # Vis feilmelding i en dialogboks
+        QtWidgets.QMessageBox.warning(self, "Feil", "API-nøkkelen er ikke gyldig.")
+
     def verify_api_key(self, api_key):
-        """Verifiser API-nøkkelen ved å sende en testforespørsel."""
         headers = {'Authorization': f'Bearer {api_key}'}
         url = 'https://api.tibber.com/v1-beta/gql'
-        test_query = """{
-            viewer {
-                homes {
-                    id
-                }
-            }
-        }"""
-
+        test_query = "{ viewer { homes { id } } }"
         try:
             response = requests.post(url, json={'query': test_query}, headers=headers)
             if response.status_code == 200 and 'data' in response.json():
                 return True
+            else:
+                print(f"Feil under verifisering av API-nøkkel: {response.status_code}")
+                return False
         except Exception as e:
-            print("Feil under verifisering av API-nøkkel:", e)
-        
-        return False
+            print(f"Feil under verifisering av API-nøkkel: {e}")
+            return False

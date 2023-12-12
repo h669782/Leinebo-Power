@@ -18,8 +18,11 @@ from PyQt5.QtGui import QIcon
 
 class MainApp(QtWidgets.QMainWindow, Ui_MainWindow):
     def __init__(self):
+        
         super(MainApp, self).__init__()
+        
         self.setupUi(self)
+        
         with open("stylesheet.css", "r") as f:
             self.setStyleSheet(f.read())
         
@@ -68,10 +71,65 @@ class MainApp(QtWidgets.QMainWindow, Ui_MainWindow):
         self.monthlyLayout.addWidget(self.monthlyCanvas)
 
         self.show_monthly_data()
-
+        self.check_api_key_and_load_data()
         self.settingsButton.clicked.connect(self.open_settings)
 
-        
+    def clear_existing_data(self):
+        # Fjerne innholdet i matplotlib-figurene
+        if self.graphCanvas.figure:
+            self.graphCanvas.figure.clear()
+        if self.graph2Canvas.figure:
+            self.graph2Canvas.figure.clear()
+        if self.monthlyCanvas.figure:
+            self.monthlyCanvas.figure.clear()
+
+        # Tilbakestille tekstetiketter
+        if self.highestPriceLabel:
+            self.highestPriceLabel.setText('')
+        if self.lowestPriceLabel:
+            self.lowestPriceLabel.setText('')
+        if hasattr(self, 'totalCostLabel'):
+            self.totalCostLabel.setText('')
+        if hasattr(self, 'totalConsumptionLabel'):
+            self.totalConsumptionLabel.setText('')
+
+        # Oppdater tegningen på canvas
+        self.graphCanvas.draw()
+        self.graph2Canvas.draw()
+        self.monthlyCanvas.draw()
+
+    def check_api_key_and_load_data(self):
+        config = load_config()
+        if self.verify_api_key(config):
+            self.clear_existing_data()  # Kall metoden for å rense eksisterende data
+            self.show_data()
+            self.show_hourly_prices()
+            self.show_monthly_data()
+        else:
+            self.open_settings_with_error()
+
+    
+
+    def verify_api_key(self, config):
+        # Her må du implementere en metode i api_client for å sjekke API-nøkkelen
+        return fetch_data(config) is not None
+
+    def open_settings_with_error(self):
+        QtWidgets.QMessageBox.warning(self, "Feil", "API-nøkkelen er ikke gyldig. Vennligst oppdater innstillingene.")
+        self.open_settings()
+
+    def open_settings(self):
+        self.settings_window = SettingsWindow(self)
+        self.settings_window.settings_updated.connect(self.on_settings_updated)
+        self.settings_window.show()
+
+    def on_settings_updated(self):
+        # Metode som kalles når innstillingene oppdateres
+        self.check_api_key_and_load_data()
+
+    def on_new_api_key_saved(self, api_key_valid):
+        if api_key_valid:
+            self.check_api_key_and_load_data()
 
     def show_data(self):
         config = load_config()
@@ -95,12 +153,12 @@ class MainApp(QtWidgets.QMainWindow, Ui_MainWindow):
         if self.graph2Canvas:
             self.graph2Layout.removeWidget(self.graph2Canvas)
             self.graph2Canvas.deleteLater()
+            self.graph2Canvas = None
 
         # Opprett en ny graf
-        self.price_figure = Figure()
-        self.price_canvas = FigureCanvas(self.price_figure)
-        self.graph2Layout.addWidget(self.price_canvas)
-        ax = self.price_figure.add_subplot(111)
+        self.graph2Canvas = FigureCanvas(Figure())
+        self.graph2Layout.addWidget(self.graph2Canvas)
+        ax = self.graph2Canvas.figure.add_subplot(111)
 
         # Tegn grafen
         times = hourly_price_data['times']
@@ -124,7 +182,7 @@ class MainApp(QtWidgets.QMainWindow, Ui_MainWindow):
         ax.set_ylabel('Pris (NOK)')
         ax.set_title('Pris per time i dag')
         # Tegn grafen på nytt
-        self.price_canvas.draw()
+        self.graph2Canvas.draw()
 
     
 
@@ -324,8 +382,11 @@ class MainApp(QtWidgets.QMainWindow, Ui_MainWindow):
         self.settings_window = SettingsWindow(self)
         self.settings_window.show()
 
+from updater import check_for_updates
+
 if __name__ == '__main__':
     app = QtWidgets.QApplication([])
+    check_for_updates()
     main_app = MainApp()
     main_app.show()
     app.exec_()
